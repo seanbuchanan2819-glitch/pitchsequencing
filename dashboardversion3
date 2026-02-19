@@ -1,0 +1,20 @@
+Done. Here's a summary of all the changes:
+
+**OUTCOME_GROUP mapping** — Remapped Statcast descriptions to the new categories:
+- `called_strike` → **Take** (batter didn't swing)
+- `swinging_strike`, `swinging_strike_blocked`, `foul_tip`, `missed_bunt`, `bunt_foul_tip` → **Whiff** (batter swung and missed)
+- `hit_by_pitch` → **Ball** (absorbed into Ball since HBP is removed as a separate branch)
+- `Ball`, `Foul`, `In Play` remain the same
+
+**COLORS.outcome** — Updated color palette:
+- Ball: `#6366f1` (indigo)
+- Take: `#f97316` (orange, formerly Strike's color)
+- Whiff: `#ec4899` (pink, new)
+- Foul: `#eab308` (yellow, unchanged)
+- In Play: `#14b8a6` (teal, unchanged)
+
+**buildOutcomeLevel** — Updated the iteration order to `['Ball', 'Take', 'Whiff', 'Foul', 'In Play']` and the count logic so both Take and Whiff increment the strike count (and end the at-bat at 3 strikes).
+
+**HTML legend** — Updated to show the 5 new result categories with their colors.
+
+**Tooltip** — Changed "Outcome" label to "Result" to match.
