@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pitch Sequencing Analyzer</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  /* ─── Reset & Base ─────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f1923;
+    color: #e2e8f0;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  /* ─── Header ────────────────────────────────────────────── */
+  .header {
+    background: #1a2332;
+    border-bottom: 1px solid #2d3748;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+    z-index: 100;
+  }
+  .header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #f7fafc;
+    white-space: nowrap;
+    letter-spacing: -0.3px;
+  }
+  .header h1 span { color: #ef4444; }
+  /* ─── Search ─────────────────────────────────────────────── */
+  .search-wrap {
+    position: relative;
+    width: 280px;
+  }
+  .search-wrap input {
+    width: 100%;
+    padding: 8px 12px;
+    background: #0f1923;
+    border: 1px solid #2d3748;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .search-wrap input:focus { border-color: #3b82f6; }
+  .search-wrap input::placeholder { color: #4a5568; }
+  .search-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #1a2332;
+    border: 1px solid #2d3748;
+    border-radius: 0 0 6px 6px;
+    max-height: 300px;
+    overflow-y: auto;
+    display: none;
+    z-index: 200;
+  }
+  .search-dropdown.show { display: block; }
+  .search-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #2d3748;
+    transition: background 0.15s;
+  }
+  .search-item:hover { background: #2d3748; }
+  .search-item .name { font-weight: 600; font-size: 14px; }
+  .search-item .meta { font-size: 12px; color: #718096; }
+  /* ─── Controls ───────────────────────────────────────────── */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: auto;
+  }
+  .control-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .control-group label {
+    font-size: 12px;
+    color: #718096;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .control-group select,
+  .control-group input[type="number"],
+  .control-group input[type="date"] {
+    padding: 6px 10px;
+    background: #0f1923;
+    border: 1px solid #2d3748;
+    border-radius: 4px;
+    color: #e2e8f0;
+    font-size: 13px;
+    outline: none;
+  }
+  .control-group select { cursor: pointer; }
+  .control-group input[type="number"] { width: 60px; }
+  .control-group input[type="date"] { width: 140px; }
+  .control-group input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+  /* Mode toggle */
+  .mode-toggle {
+    display: flex;
+    background: #0f1923;
+    border: 1px solid #2d3748;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .mode-toggle button {
+    padding: 5px 12px;
+    background: transparent;
+    border: none;
+    color: #718096;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .mode-toggle button.active {
+    background: #2d3748;
+    color: #e2e8f0;
+  }
+  .date-controls { display: none; }
+  .date-controls.show { display: flex; gap: 6px; align-items: center; }
+  .date-sep { color: #4a5568; font-size: 12px; }
+  .btn-analyze {
+    padding: 8px 20px;
+    background: #ef4444;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn-analyze:hover { background: #dc2626; }
+  .btn-analyze:disabled { background: #4a5568; cursor: not-allowed; }
+  /* ─── Main Layout ───────────────────────────────────────── */
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  /* ─── Sidebar ───────────────────────────────────────────── */
+  .sidebar {
+    width: 320px;
+    background: #1a2332;
+    border-right: 1px solid #2d3748;
+    overflow-y: auto;
+    flex-shrink: 0;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .card {
+    background: #0f1923;
+    border: 1px solid #2d3748;
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #718096;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+  /* Pitcher Profile */
+  .pitcher-name {
+    font-size: 20px;
+    font-weight: 700;
+    color: #f7fafc;
+    margin-bottom: 4px;
+  }
+  .pitcher-team { font-size: 14px; color: #718096; margin-bottom: 12px; }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 13px;
+  }
+  .stat-row .label { color: #718096; }
+  .stat-row .value { color: #e2e8f0; font-weight: 600; }
+  /* Pitch Mix */
+  .pitch-mix-bar {
+    display: flex;
+    height: 24px;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .pitch-mix-bar div { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+  .pitch-mix-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+  /* Patterns */
+  .pattern-item {
+    padding: 10px;
+    background: #1a2332;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    border-left: 3px solid;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .pattern-item:hover { background: #2d3748; }
+  .pattern-item.high { border-left-color: #ef4444; }
+  .pattern-item.medium { border-left-color: #f59e0b; }
+  .pattern-desc {
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 4px;
+    line-height: 1.4;
+  }
+  .pattern-stats {
+    font-size: 12px;
+    color: #718096;
+    display: flex;
+    gap: 12px;
+  }
+  .pattern-pct {
+    font-weight: 700;
+    color: #ef4444;
+  }
+  .no-patterns {
+    font-size: 13px;
+    color: #4a5568;
+    text-align: center;
+    padding: 16px;
+  }
+  /* ─── Tree Area ──────────────────────────────────────────── */
+  .tree-area {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+  .tree-area svg {
+    width: 100%;
+    height: 100%;
+  }
+  /* Tree Nodes */
+  .node-card {
+    cursor: pointer;
+    transition: filter 0.2s;
+  }
+  .node-card:hover { filter: brightness(1.15); }
+  .node-rect {
+    rx: 6;
+    ry: 6;
+    stroke-width: 1.5;
+  }
+  .node-name {
+    font-size: 13px;
+    font-weight: 700;
+    fill: #f7fafc;
+  }
+  .node-pct {
+    font-size: 20px;
+    font-weight: 800;
+    fill: #f7fafc;
+  }
+  .node-count-text {
+    font-size: 11px;
+    fill: #94a3b8;
+  }
+  .node-sample {
+    font-size: 10px;
+    fill: #64748b;
+  }
+  .node-expand {
+    font-size: 14px;
+    fill: #94a3b8;
+    font-weight: 700;
+  }
+  /* Links */
+  .tree-link {
+    fill: none;
+    stroke: #2d3748;
+    stroke-width: 1.5;
+    stroke-opacity: 0.6;
+  }
+  /* ─── Loading & Status ───────────────────────────────────── */
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 25, 35, 0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+  }
+  .loading-overlay.hidden { display: none; }
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #2d3748;
+    border-top-color: #ef4444;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { margin-top: 12px; font-size: 14px; color: #718096; }
+  .welcome-msg {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px;
+  }
+  .welcome-msg.hidden { display: none; }
+  .welcome-msg h2 { font-size: 24px; color: #4a5568; margin-bottom: 8px; }
+  .welcome-msg p { font-size: 14px; color: #4a5568; max-width: 400px; line-height: 1.6; }
+  /* ─── Error ──────────────────────────────────────────────── */
+  .error-msg {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #7f1d1d;
+    color: #fecaca;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    z-index: 100;
+    display: none;
+    max-width: 600px;
+    text-align: center;
+  }
+  .error-msg.show { display: block; }
+  /* ─── Tooltip ────────────────────────────────────────────── */
+  .tooltip {
+    position: absolute;
+    background: #1a2332;
+    border: 1px solid #2d3748;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 12px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 300;
+    max-width: 250px;
+    line-height: 1.5;
+  }
+  .tooltip.show { opacity: 1; }
+  .tooltip .tt-label { color: #718096; }
+  .tooltip .tt-value { color: #f7fafc; font-weight: 600; }
+  /* ─── Zoom Controls ──────────────────────────────────────── */
+  .zoom-controls {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 50;
+  }
+  .zoom-btn {
+    width: 36px;
+    height: 36px;
+    background: #1a2332;
+    border: 1px solid #2d3748;
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+  }
+  .zoom-btn:hover { background: #2d3748; }
+  /* ─── Legend ──────────────────────────────────────────────── */
+  .tree-legend {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: #1a2332;
+    border: 1px solid #2d3748;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 11px;
+    z-index: 50;
+    display: flex;
+    gap: 16px;
+  }
+  .tree-legend-group { display: flex; flex-direction: column; gap: 4px; }
+  .tree-legend-title { font-weight: 700; color: #718096; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+  .tree-legend-item { display: flex; align-items: center; gap: 6px; }
+  .tree-legend-color { width: 14px; height: 14px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<!-- ─── Header ─────────────────────────────────────────────── -->
+<div class="header">
+  <h1><span>///</span> Pitch Sequencing Analyzer</h1>
+  <div class="search-wrap">
+    <input type="text" id="searchInput" placeholder="Search pitcher (e.g. Gerrit Cole)..." autocomplete="off">
+    <div class="search-dropdown" id="searchDropdown"></div>
+  </div>
+  <div class="controls">
+    <div class="mode-toggle">
+      <button id="modeSeasonBtn" class="active" onclick="setMode('season')">Season</button>
+      <button id="modeDateBtn" onclick="setMode('daterange')">Date Range</button>
+    </div>
+    <div class="control-group" id="seasonControls">
+      <label>Season</label>
+      <select id="seasonSelect"></select>
+    </div>
+    <div class="date-controls" id="dateControls">
+      <input type="date" id="startDate" title="Start date">
+      <span class="date-sep">to</span>
+      <input type="date" id="endDate" title="End date">
+    </div>
+    <div class="control-group">
+      <label>Batter</label>
+      <select id="handednessSelect">
+        <option value="all" selected>All</option>
+        <option value="L">vs LHH</option>
+        <option value="R">vs RHH</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Min Sample</label>
+      <input type="number" id="minSample" value="10" min="3" max="50">
+    </div>
+    <button class="btn-analyze" id="analyzeBtn" disabled>Analyze</button>
+  </div>
+</div>
+<!-- ─── Main ───────────────────────────────────────────────── -->
+<div class="main">
+  <!-- Sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="card" id="profileCard" style="display:none">
+      <div class="pitcher-name" id="pitcherName"></div>
+      <div class="pitcher-team" id="pitcherTeam"></div>
+      <div class="stat-row"><span class="label">Total At-Bats</span><span class="value" id="totalAB">—</span></div>
+      <div class="stat-row"><span class="label">Total Pitches</span><span class="value" id="totalPitches">—</span></div>
+      <div class="stat-row"><span class="label">Pitches / AB</span><span class="value" id="pitchesPerAB">—</span></div>
+    </div>
+    <div class="card" id="mixCard" style="display:none">
+      <div class="card-title">Overall Pitch Mix</div>
+      <div class="pitch-mix-bar" id="overallMixBar"></div>
+      <div class="pitch-mix-legend" id="overallMixLegend"></div>
+    </div>
+    <div class="card" id="fpMixCard" style="display:none">
+      <div class="card-title">First Pitch Selection</div>
+      <div class="pitch-mix-bar" id="fpMixBar"></div>
+      <div class="pitch-mix-legend" id="fpMixLegend"></div>
+    </div>
+    <div class="card" id="patternsCard" style="display:none">
+      <div class="card-title">Detected Patterns</div>
+      <div id="patternsList"></div>
+    </div>
+  </div>
+  <!-- Tree Visualization -->
+  <div class="tree-area" id="treeArea">
+    <svg id="treeSvg"></svg>
+    <div class="welcome-msg" id="welcomeMsg">
+      <h2>Search for a pitcher to begin</h2>
+      <p>Type a pitcher's name, select a season or date range, and click Analyze to build their pitch sequencing decision tree. Pulls live data from MLB Statcast.</p>
+    </div>
+    <div class="loading-overlay hidden" id="loadingOverlay">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loadingText">Fetching Statcast data...</div>
+    </div>
+    <div class="error-msg" id="errorMsg"></div>
+    <div class="tree-legend" id="treeLegend" style="display:none">
+      <div class="tree-legend-group">
+        <div class="tree-legend-title">Pitch Type</div>
+        <div class="tree-legend-item"><div class="tree-legend-color" style="background:#ef4444"></div>Fastball</div>
+        <div class="tree-legend-item"><div class="tree-legend-color" style="background:#3b82f6"></div>Breaking</div>
+        <div class="tree-legend-item"><div class="tree-legend-color" style="background:#22c55e"></div>Offspeed</div>
+        <div class="tree-legend-item"><div class="tree-legend-color" style="background:#64748b"></div>Other</div>
+      </div>
+      <div class="tree-legend-group">
+        <div class="tree-legend-title">Result</div>
+        <div class="tree-legend-item"><div class="tree-legend-color" style="background:#6366f1"></div>Ball</div>
+        <div class="tree-legend-item"><div class="tree-legend-color" style="background:#f97316"></div>Take</div>
+        <div class="tree-legend-item"><div class="tree-legend-color" style="background:#ec4899"></div>Whiff</div>
+        <div class="tree-legend-item"><div class="tree-legend-color" style="background:#eab308"></div>Foul</div>
+        <div class="tree-legend-item"><div class="tree-legend-color" style="background:#14b8a6"></div>In Play</div>
+      </div>
+    </div>
+    <div class="zoom-controls">
+      <button class="zoom-btn" id="zoomIn" title="Zoom in">+</button>
+      <button class="zoom-btn" id="zoomOut" title="Zoom out">&minus;</button>
+      <button class="zoom-btn" id="zoomReset" title="Reset view">&#x27F2;</button>
+    </div>
+  </div>
+</div>
+<!-- Tooltip -->
+<div class="tooltip" id="tooltip"></div>
+<script>
+// =====================================================================
+// Configuration & Constants
+// =====================================================================
+const COLORS = {
+  pitch: { 'Fastball': '#ef4444', 'Breaking': '#3b82f6', 'Offspeed': '#22c55e', 'Other': '#64748b' },
+  outcome: { 'Ball': '#6366f1', 'Take': '#f97316', 'Whiff': '#ec4899', 'Foul': '#eab308', 'In Play': '#14b8a6' },
+  root: '#475569',
+};
+const NODE_W = 140;
+const NODE_H = 64;
+const NODE_GAP_X = 60;
+const NODE_GAP_Y = 8;
+// ─── Pitch Type → Group Mapping ──────────────────────────────
+const PITCH_GROUP = {
+  'FF': 'Fastball', 'FA': 'Fastball', 'SI': 'Fastball', 'FC': 'Fastball',
+  'SL': 'Breaking', 'CU': 'Breaking', 'KC': 'Breaking',
+  'SV': 'Breaking', 'ST': 'Breaking', 'CS': 'Breaking',
+  'CH': 'Offspeed', 'FS': 'Offspeed',
+  'KN': 'Other', 'EP': 'Other', 'PO': 'Other', 'SC': 'Other',
+  'IN': 'Other', 'AB': 'Other', 'AS': 'Other', 'NP': 'Other',
+};
+// ─── Statcast Description → Result Mapping ─────────────────
+const OUTCOME_GROUP = {
+  'called_strike': 'Take',
+  'swinging_strike': 'Whiff', 'swinging_strike_blocked': 'Whiff',
+  'missed_bunt': 'Whiff', 'bunt_foul_tip': 'Whiff',
+  'foul_tip': 'Whiff',
+  'ball': 'Ball', 'blocked_ball': 'Ball',
+  'pitchout': 'Ball', 'intent_ball': 'Ball',
+  'hit_by_pitch': 'Ball',
+  'foul': 'Foul', 'foul_bunt': 'Foul', 'foul_pitchout': 'Foul',
+  'hit_into_play': 'In Play', 'hit_into_play_no_out': 'In Play',
+  'hit_into_play_score': 'In Play',
+};
+// =====================================================================
+// State
+// =====================================================================
+let selectedPitcher = null;
+let rootNode = null;
+let svgGroup = null;
+let zoomBehavior = null;
+let searchTimeout = null;
+let currentMode = 'season';
+// =====================================================================
+// Data Fetching — MLB Stats API + Baseball Savant
+// =====================================================================
+/**
+ * Search pitchers using MLB Stats API (CORS-friendly).
+ * Searches MLB + all MiLB levels.
+ */
+async function searchPitchers(query) {
+  const url = 'https://statsapi.mlb.com/api/v1/people/search'
+    + '?names=' + encodeURIComponent(query)
+    + '&sportIds=1,11,12,13,14,15,16'
+    + '&hydrate=currentTeam'
+    + '&limit=30';
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('MLB API search failed');
+  const data = await resp.json();
+  return (data.people || [])
+    .filter(p => {
+      const pos = p.primaryPosition ? p.primaryPosition.abbreviation : '';
+      return pos === 'P' || pos === 'TWP';
+    })
+    .map(p => ({
+      id: p.id,
+      name: p.fullName || '',
+      team: p.currentTeam ? p.currentTeam.name : 'Free Agent',
+      league: p.currentTeam && p.currentTeam.sport ? p.currentTeam.sport.name : 'Unknown',
+    }));
+}
+/**
+ * Fetch with CORS proxy fallback.
+ * Tries direct first, then known CORS proxies.
+ */
+async function fetchWithProxy(url) {
+  const attempts = [
+    url,
+    'https://corsproxy.io/?' + encodeURIComponent(url),
+  ];
+  for (const attemptUrl of attempts) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      const resp = await fetch(attemptUrl, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'PitchSequencingAnalyzer/1.0' }
+      });
+      clearTimeout(timeoutId);
+      if (resp.ok) {
+        const text = await resp.text();
+        if (text && text.length > 100) return text;
+      }
+    } catch (e) {
+      // try next proxy
+    }
+  }
+  throw new Error('Unable to fetch data — all sources failed');
+}
+/**
+ * Chunk a date range into ~30-day windows for Baseball Savant.
+ */
+function chunkDateRange(startDate, endDate) {
+  const chunks = [];
+  let current = new Date(startDate + 'T00:00:00');
+  const end = new Date(endDate + 'T00:00:00');
+  while (current < end) {
+    const chunkEnd = new Date(current);
+    chunkEnd.setDate(chunkEnd.getDate() + 30);
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime());
+    chunks.push({
+      start: current.toISOString().split('T')[0],
+      end: chunkEnd.toISOString().split('T')[0],
+    });
+    current = new Date(chunkEnd);
+  }
+  return chunks;
+}
+/**
+ * Fetch Statcast pitch-by-pitch data from Baseball Savant.
+ * Chunks date ranges into 30-day windows to avoid timeouts.
+ */
+async function fetchStatcastData(playerId, season, startDate, endDate) {
+  const actualStart = startDate || (season + '-02-15');
+  const actualEnd = endDate || (season + '-11-30');
+  const chunks = chunkDateRange(actualStart, actualEnd);
+  const allRows = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    setLoadingText(
+      chunks.length > 1
+        ? `Fetching Statcast data (${i + 1}/${chunks.length})...`
+        : 'Fetching Statcast data...'
+    );
+    const csvUrl = 'https://baseballsavant.mlb.com/statcast_search/csv'
+      + '?player_type=pitcher'
+      + '&player_id=' + playerId
+      + '&game_date_gt=' + chunk.start
+      + '&game_date_lt=' + chunk.end
+      + '&type=details&all=true';
+    try {
+      const csvText = await fetchWithProxy(csvUrl);
+      const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+      if (parsed.data && parsed.data.length > 0) {
+        allRows.push(...parsed.data);
+      }
+    } catch (e) {
+      console.warn('Chunk fetch failed:', chunk, e);
+    }
+  }
+  return allRows;
+}
+// =====================================================================
+// Data Processing — Port of Python Backend Logic
+// =====================================================================
+/**
+ * Convert raw Statcast CSV rows into structured at-bat sequences.
+ * Each at-bat is an array of { pitch_group, outcome } objects.
+ */
+function processAtBats(rows, handedness) {
+  // Filter valid rows
+  const valid = rows.filter(r => {
+    const pt = (r.pitch_type || '').trim();
+    if (!pt || pt === 'null' || pt === 'nan' || pt === 'None' || !r.description) return false;
+    // Filter by batter handedness (Statcast 'stand' column: 'L' or 'R')
+    if (handedness && handedness !== 'all') {
+      const stand = (r.stand || '').trim();
+      if (stand !== handedness) return false;
+    }
+    return true;
+  });
+  if (valid.length === 0) return [];
+  // Sort by game_date → game_pk → at_bat_number → pitch_number
+  valid.sort((a, b) => {
+    const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+    return cmp(a.game_date || '', b.game_date || '')
+      || cmp(+(a.game_pk || 0), +(b.game_pk || 0))
+      || cmp(+(a.at_bat_number || 0), +(b.at_bat_number || 0))
+      || cmp(+(a.pitch_number || 0), +(b.pitch_number || 0));
+  });
+  // Group by (game_pk, at_bat_number) → build sequences
+  const groups = {};
+  for (const r of valid) {
+    const key = r.game_pk + '_' + r.at_bat_number;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push({
+      pitch_group: PITCH_GROUP[r.pitch_type.trim()] || 'Other',
+      outcome: OUTCOME_GROUP[r.description.trim()] || 'Other',
+    });
+  }
+  return Object.values(groups).filter(seq => seq.length > 0);
+}
+/**
+ * Build a pitch sequencing decision tree.
+ * Alternates between pitch-type nodes and result nodes.
+ */
+function buildDecisionTree(atBats, minSample, maxDepth) {
+  minSample = minSample || 10;
+  maxDepth = maxDepth || 8;
+  let nodeIdCounter = 0;
+  function nextId() {
+    nodeIdCounter++;
+    return 'n' + nodeIdCounter;
+  }
+  function buildPitchLevel(sequences, depth, balls, strikes) {
+    if (!sequences || sequences.length < minSample || depth >= maxDepth) return [];
+    const active = sequences.filter(s => depth < s.length);
+    if (active.length < minSample) return [];
+    // Group by pitch type
+    const typeGroups = {};
+    for (const s of active) {
+      const pt = s[depth].pitch_group;
+      if (!typeGroups[pt]) typeGroups[pt] = [];
+      typeGroups[pt].push(s);
+    }
+    const total = active.length;
+    const nodes = [];
+    for (const pt of ['Fastball', 'Breaking', 'Offspeed', 'Other']) {
+      const matching = typeGroups[pt] || [];
+      if (matching.length < minSample) continue;
+      const outcomeNodes = buildOutcomeLevel(matching, depth, balls, strikes);
+      nodes.push({
+        id: nextId(),
+        name: pt,
+        count: matching.length,
+        pct: Math.round(matching.length / total * 1000) / 10,
+        nodeType: 'pitch',
+        depth: depth,
+        balls: balls,
+        strikes: strikes,
+        countStr: balls + '-' + strikes,
+        children: outcomeNodes,
+      });
+    }
+    return nodes;
+  }
+  function buildOutcomeLevel(sequences, depth, balls, strikes) {
+    const outcomeGroups = {};
+    for (const s of sequences) {
+      if (depth < s.length) {
+        const oc = s[depth].outcome;
+        if (!outcomeGroups[oc]) outcomeGroups[oc] = [];
+        outcomeGroups[oc].push(s);
+      }
+    }
+    const total = Object.values(outcomeGroups).reduce((sum, arr) => sum + arr.length, 0);
+    if (total < minSample) return [];
+    const nodes = [];
+    for (const oc of ['Ball', 'Take', 'Whiff', 'Foul', 'In Play']) {
+      const matching = outcomeGroups[oc] || [];
+      if (matching.length < minSample) continue;
+      // Update ball-strike count
+      let newBalls = balls, newStrikes = strikes;
+      if (oc === 'Ball') newBalls = balls + 1;
+      else if (oc === 'Take') newStrikes = strikes + 1;
+      else if (oc === 'Whiff') newStrikes = strikes + 1;
+      else if (oc === 'Foul' && strikes < 2) newStrikes = strikes + 1;
+      // Check if at-bat ends
+      let atBatEnds = (oc === 'In Play');
+      if (newBalls >= 4) atBatEnds = true;
+      if ((oc === 'Take' || oc === 'Whiff') && newStrikes >= 3) atBatEnds = true;
+      // Recurse if at-bat continues
+      let nextChildren = [];
+      if (!atBatEnds) {
+        const continuing = matching.filter(s => depth + 1 < s.length);
+        if (continuing.length >= minSample) {
+          nextChildren = buildPitchLevel(continuing, depth + 1, newBalls, newStrikes);
+        }
+      }
+      nodes.push({
+        id: nextId(),
+        name: oc,
+        count: matching.length,
+        pct: Math.round(matching.length / total * 1000) / 10,
+        nodeType: 'outcome',
+        depth: depth,
+        balls: newBalls,
+        strikes: newStrikes,
+        countStr: newBalls + '-' + newStrikes,
+        atBatEnds: atBatEnds,
+        children: nextChildren,
+      });
+    }
+    return nodes;
+  }
+  // Build from root
+  return {
+    id: nextId(),
+    name: 'At-Bat Start',
+    count: atBats.length,
+    pct: 100.0,
+    nodeType: 'root',
+    depth: -1,
+    balls: 0,
+    strikes: 0,
+    countStr: '0-0',
+    children: buildPitchLevel(atBats, 0, 0, 0),
+  };
+}
+/**
+ * Scan the tree for predictable pitch sequences.
+ */
+function findPatterns(tree, threshold, minCount, path) {
+  threshold = threshold || 60.0;
+  minCount = minCount || 15;
+  path = path || [];
+  const patterns = [];
+  for (const child of (tree.children || [])) {
+    const currentPath = path.concat([{
+      name: child.name,
+      type: child.nodeType,
+      pct: child.pct || 0,
+      countStr: child.countStr || '',
+    }]);
+    if (child.nodeType === 'pitch' && child.pct >= threshold && child.count >= minCount) {
+      const descParts = [];
+      for (const step of currentPath) {
+        descParts.push(step.type === 'pitch' ? step.name : step.name.toLowerCase());
+      }
+      patterns.push({
+        description: descParts.join(' \u2192 '),
+        pct: child.pct,
+        count: child.count,
+        pitch: child.name,
+        depth: child.depth || 0,
+        countStr: child.countStr || '',
+        severity: child.pct >= 75 ? 'high' : 'medium',
+      });
+    }
+    patterns.push(...findPatterns(child, threshold, minCount, currentPath));
+  }
+  patterns.sort((a, b) => (b.pct - a.pct) || (b.count - a.count));
+  return patterns.slice(0, 25);
+}
+/**
+ * Compute summary statistics from at-bat data.
+ */
+function computeSummary(atBats) {
+  const totalPitches = atBats.reduce((sum, ab) => sum + ab.length, 0);
+  const pitchMix = {};
+  const firstPitchMix = {};
+  for (const ab of atBats) {
+    for (const p of ab) {
+      pitchMix[p.pitch_group] = (pitchMix[p.pitch_group] || 0) + 1;
+    }
+    if (ab.length > 0) {
+      firstPitchMix[ab[0].pitch_group] = (firstPitchMix[ab[0].pitch_group] || 0) + 1;
+    }
+  }
+  // Convert to percentages
+  const pitchMixPct = {};
+  for (const [k, v] of Object.entries(pitchMix)) {
+    pitchMixPct[k] = Math.round(v / totalPitches * 1000) / 10;
+  }
+  const fpMixPct = {};
+  for (const [k, v] of Object.entries(firstPitchMix)) {
+    fpMixPct[k] = Math.round(v / atBats.length * 1000) / 10;
+  }
+  return {
+    total_at_bats: atBats.length,
+    total_pitches: totalPitches,
+    avg_pitches_per_ab: Math.round(totalPitches / atBats.length * 100) / 100,
+    pitch_mix: pitchMixPct,
+    first_pitch_mix: fpMixPct,
+  };
+}
+// =====================================================================
+// Initialization
+// =====================================================================
+(function init() {
+  // Populate season dropdown (current year down to 2015)
+  const seasonSel = document.getElementById('seasonSelect');
+  const currentYear = new Date().getFullYear();
+  for (let y = currentYear; y >= 2015; y--) {
+    const opt = document.createElement('option');
+    opt.value = y;
+    opt.textContent = y;
+    if (y === currentYear - 1) opt.selected = true;
+    seasonSel.appendChild(opt);
+  }
+  // Search input
+  const searchInput = document.getElementById('searchInput');
+  searchInput.addEventListener('input', onSearchInput);
+  searchInput.addEventListener('focus', () => {
+    if (document.getElementById('searchDropdown').children.length > 0) {
+      document.getElementById('searchDropdown').classList.add('show');
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.search-wrap')) {
+      document.getElementById('searchDropdown').classList.remove('show');
+    }
+  });
+  // Default date range: last 30 days
+  const today = new Date();
+  const thirtyAgo = new Date(today);
+  thirtyAgo.setDate(thirtyAgo.getDate() - 30);
+  document.getElementById('endDate').value = today.toISOString().split('T')[0];
+  document.getElementById('startDate').value = thirtyAgo.toISOString().split('T')[0];
+  // Buttons
+  document.getElementById('analyzeBtn').addEventListener('click', onAnalyze);
+  document.getElementById('zoomIn').addEventListener('click', () => zoomBy(1.3));
+  document.getElementById('zoomOut').addEventListener('click', () => zoomBy(0.7));
+  document.getElementById('zoomReset').addEventListener('click', resetZoom);
+  initSvg();
+})();
+function initSvg() {
+  const svg = d3.select('#treeSvg');
+  svgGroup = svg.append('g').attr('class', 'tree-root');
+  zoomBehavior = d3.zoom()
+    .scaleExtent([0.15, 3])
+    .on('zoom', (event) => { svgGroup.attr('transform', event.transform); });
+  svg.call(zoomBehavior);
+}
+// =====================================================================
+// Search
+// =====================================================================
+function onSearchInput(e) {
+  const query = e.target.value.trim();
+  clearTimeout(searchTimeout);
+  if (query.length < 2) {
+    document.getElementById('searchDropdown').classList.remove('show');
+    return;
+  }
+  searchTimeout = setTimeout(() => doSearch(query), 300);
+}
+async function doSearch(query) {
+  try {
+    const results = await searchPitchers(query);
+    renderSearchResults(results);
+  } catch (err) {
+    console.error('Search error:', err);
+  }
+}
+function renderSearchResults(results) {
+  const dropdown = document.getElementById('searchDropdown');
+  dropdown.innerHTML = '';
+  if (results.length === 0) {
+    dropdown.innerHTML = '<div class="search-item"><span class="meta">No pitchers found</span></div>';
+    dropdown.classList.add('show');
+    return;
+  }
+  results.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'search-item';
+    div.innerHTML = '<div class="name">' + escHtml(p.name) + '</div><div class="meta">' + escHtml(p.team) + ' &middot; ' + escHtml(p.league) + '</div>';
+    div.addEventListener('click', () => selectPitcher(p));
+    dropdown.appendChild(div);
+  });
+  dropdown.classList.add('show');
+}
+function selectPitcher(pitcher) {
+  selectedPitcher = pitcher;
+  document.getElementById('searchInput').value = pitcher.name;
+  document.getElementById('searchDropdown').classList.remove('show');
+  document.getElementById('analyzeBtn').disabled = false;
+}
+// =====================================================================
+// Mode Toggle
+// =====================================================================
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('modeSeasonBtn').classList.toggle('active', mode === 'season');
+  document.getElementById('modeDateBtn').classList.toggle('active', mode === 'daterange');
+  document.getElementById('seasonControls').style.display = mode === 'season' ? '' : 'none';
+  document.getElementById('dateControls').classList.toggle('show', mode === 'daterange');
+}
+// =====================================================================
+// Analyze — Main Entry Point
+// =====================================================================
+async function onAnalyze() {
+  if (!selectedPitcher) return;
+  const season = document.getElementById('seasonSelect').value;
+  const minSample = parseInt(document.getElementById('minSample').value) || 10;
+  const handedness = document.getElementById('handednessSelect').value;
+  let startDate = null, endDate = null, dateLabel = '';
+  if (currentMode === 'daterange') {
+    startDate = document.getElementById('startDate').value;
+    endDate = document.getElementById('endDate').value;
+    if (!startDate || !endDate) {
+      showError('Please select both a start and end date');
+      return;
+    }
+    if (endDate <= startDate) {
+      showError('End date must be after start date');
+      return;
+    }
+    dateLabel = startDate + ' to ' + endDate;
+  } else {
+    dateLabel = season;
+  }
+  showLoading(true);
+  hideError();
+  document.getElementById('welcomeMsg').classList.add('hidden');
+  try {
+    // 1. Fetch raw CSV data from Baseball Savant
+    setLoadingText('Fetching Statcast data for ' + selectedPitcher.name + '...');
+    const rows = await fetchStatcastData(
+      selectedPitcher.id,
+      currentMode === 'daterange' ? new Date(startDate).getFullYear() : season,
+      startDate,
+      endDate
+    );
+    if (!rows || rows.length === 0) {
+      showError('No Statcast data found for ' + selectedPitcher.name + ' in ' + dateLabel
+        + '. MiLB data may be limited depending on stadium Statcast availability.');
+      return;
+    }
+    // 2. Process into at-bat sequences
+    setLoadingText('Processing ' + rows.length.toLocaleString() + ' pitches...');
+    const atBats = processAtBats(rows, handedness);
+    if (!atBats || atBats.length === 0) {
+      showError('Could not process pitch data into at-bats.');
+      return;
+    }
+    // 3. Build decision tree
+    setLoadingText('Building decision tree...');
+    const tree = buildDecisionTree(atBats, minSample);
+    // 4. Find patterns
+    const patterns = findPatterns(tree);
+    // 5. Compute summary
+    const summary = computeSummary(atBats);
+    // 6. Render everything
+    const handLabel = handedness === 'L' ? 'vs LHH' : handedness === 'R' ? 'vs RHH' : '';
+    renderResults({
+      tree: tree,
+      patterns: patterns,
+      summary: summary,
+      meta: { date_label: dateLabel + (handLabel ? ' \u00B7 ' + handLabel : '') },
+    });
+  } catch (err) {
+    console.error('Analyze error:', err);
+    showError('Error: ' + err.message);
+  } finally {
+    showLoading(false);
+  }
+}
+// =====================================================================
+// Render Results
+// =====================================================================
+function renderResults(data) {
+  renderProfile(data.summary, data.meta);
+  renderPitchMix(data.summary.pitch_mix, 'overallMixBar', 'overallMixLegend');
+  renderPitchMix(data.summary.first_pitch_mix, 'fpMixBar', 'fpMixLegend');
+  renderPatterns(data.patterns);
+  ['profileCard', 'mixCard', 'fpMixCard', 'patternsCard'].forEach(id => {
+    document.getElementById(id).style.display = '';
+  });
+  document.getElementById('treeLegend').style.display = '';
+  renderTree(data.tree);
+}
+function renderProfile(summary, meta) {
+  document.getElementById('pitcherName').textContent = selectedPitcher.name;
+  const dateLabel = meta && meta.date_label ? meta.date_label : document.getElementById('seasonSelect').value;
+  document.getElementById('pitcherTeam').textContent = selectedPitcher.team + ' \u00B7 ' + dateLabel;
+  document.getElementById('totalAB').textContent = summary.total_at_bats.toLocaleString();
+  document.getElementById('totalPitches').textContent = summary.total_pitches.toLocaleString();
+  document.getElementById('pitchesPerAB').textContent = summary.avg_pitches_per_ab;
+}
+function renderPitchMix(mix, barId, legendId) {
+  const bar = document.getElementById(barId);
+  const legend = document.getElementById(legendId);
+  bar.innerHTML = '';
+  legend.innerHTML = '';
+  for (const pt of ['Fastball', 'Breaking', 'Offspeed', 'Other']) {
+    const pct = mix[pt];
+    if (!pct) continue;
+    const div = document.createElement('div');
+    div.style.width = pct + '%';
+    div.style.background = COLORS.pitch[pt];
+    div.textContent = pct >= 8 ? pct + '%' : '';
+    bar.appendChild(div);
+    const li = document.createElement('div');
+    li.className = 'legend-item';
+    li.innerHTML = '<div class="legend-dot" style="background:' + COLORS.pitch[pt] + '"></div>' + pt + ' ' + pct + '%';
+    legend.appendChild(li);
+  }
+}
+function renderPatterns(patterns) {
+  const list = document.getElementById('patternsList');
+  list.innerHTML = '';
+  if (!patterns || patterns.length === 0) {
+    list.innerHTML = '<div class="no-patterns">No strong patterns detected at current threshold</div>';
+    return;
+  }
+  patterns.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'pattern-item ' + p.severity;
+    div.innerHTML =
+      '<div class="pattern-desc">' + escHtml(p.description) + '</div>'
+      + '<div class="pattern-stats">'
+      + '<span class="pattern-pct">' + p.pct + '%</span>'
+      + '<span>n=' + p.count + '</span>'
+      + '<span>Count: ' + p.countStr + '</span>'
+      + '</div>';
+    list.appendChild(div);
+  });
+}
+// =====================================================================
+// D3 Tree Visualization
+// =====================================================================
+function renderTree(data) {
+  svgGroup.selectAll('*').remove();
+  rootNode = d3.hierarchy(data, d => d.children);
+  // Collapse beyond depth 2
+  rootNode.descendants().forEach(d => {
+    if (d.depth > 2) {
+      d._children = d.children;
+      d.children = null;
+    }
+  });
+  svgGroup.append('g').attr('class', 'links-group');
+  svgGroup.append('g').attr('class', 'nodes-group');
+  updateTree(rootNode);
+  setTimeout(resetZoom, 100);
+}
+function updateTree(source) {
+  const treeLayout = d3.tree()
+    .nodeSize([NODE_H + NODE_GAP_Y, NODE_W + NODE_GAP_X])
+    .separation((a, b) => a.parent === b.parent ? 1 : 1.2);
+  treeLayout(rootNode);
+  const duration = 400;
+  // ─── Links ──────────────────────────────────────────
+  const linksGroup = svgGroup.select('.links-group');
+  const links = rootNode.links();
+  const link = linksGroup.selectAll('.tree-link')
+    .data(links, d => d.target.data.id);
+  const linkEnter = link.enter()
+    .append('path')
+    .attr('class', 'tree-link')
+    .attr('d', () => {
+      const o = { x: source.x0 || source.x, y: source.y0 || source.y };
+      return linkPath({ source: o, target: o });
+    });
+  link.merge(linkEnter)
+    .transition().duration(duration)
+    .attr('d', d => linkPath(d));
+  link.exit()
+    .transition().duration(duration)
+    .attr('d', () => {
+      const o = { x: source.x, y: source.y };
+      return linkPath({ source: o, target: o });
+    })
+    .remove();
+  // ─── Nodes ──────────────────────────────────────────
+  const nodesGroup = svgGroup.select('.nodes-group');
+  const nodes = rootNode.descendants();
+  const node = nodesGroup.selectAll('.node-card')
+    .data(nodes, d => d.data.id);
+  const nodeEnter = node.enter()
+    .append('g')
+    .attr('class', 'node-card')
+    .attr('transform', 'translate(' + (source.y0 || source.y) + ',' + (source.x0 || source.x) + ')')
+    .on('click', (event, d) => toggleNode(d))
+    .on('mouseenter', (event, d) => showTooltip(event, d))
+    .on('mouseleave', hideTooltip);
+  nodeEnter.append('rect')
+    .attr('class', 'node-rect')
+    .attr('width', NODE_W).attr('height', NODE_H)
+    .attr('x', 0).attr('y', -NODE_H / 2)
+    .attr('fill', d => getNodeFill(d.data))
+    .attr('stroke', d => getNodeStroke(d.data))
+    .attr('opacity', 0)
+    .transition().duration(duration).attr('opacity', 1);
+  nodeEnter.append('rect')
+    .attr('class', 'node-pct-bar')
+    .attr('width', 0).attr('height', 3)
+    .attr('x', 0).attr('y', NODE_H / 2 - 3)
+    .attr('fill', d => getNodeStroke(d.data))
+    .attr('opacity', 0.7)
+    .transition().duration(duration)
+    .attr('width', d => (d.data.pct / 100) * NODE_W);
+  nodeEnter.append('text')
+    .attr('class', 'node-name')
+    .attr('x', 10).attr('y', -NODE_H / 2 + 18)
+    .text(d => d.data.name);
+  nodeEnter.append('text')
+    .attr('class', 'node-pct')
+    .attr('x', NODE_W - 10).attr('y', -NODE_H / 2 + 20)
+    .attr('text-anchor', 'end')
+    .text(d => d.data.nodeType === 'root' ? '' : d.data.pct + '%');
+  nodeEnter.append('text')
+    .attr('class', 'node-count-text')
+    .attr('x', 10).attr('y', NODE_H / 2 - 10)
+    .text(d => {
+      if (d.data.nodeType === 'root') return d.data.count + ' at-bats';
+      if (d.data.nodeType === 'outcome') return 'Count: ' + d.data.countStr;
+      return 'n = ' + d.data.count;
+    });
+  nodeEnter.append('text')
+    .attr('class', 'node-expand')
+    .attr('x', NODE_W - 10).attr('y', NODE_H / 2 - 8)
+    .attr('text-anchor', 'end')
+    .text(d => hasHidden(d) ? '\u25B8' : '');
+  const nodeUpdate = node.merge(nodeEnter);
+  nodeUpdate.transition().duration(duration)
+    .attr('transform', d => 'translate(' + d.y + ',' + d.x + ')');
+  nodeUpdate.select('.node-expand')
+    .text(d => hasHidden(d) ? '\u25B8' : '');
+  node.exit().transition().duration(duration)
+    .attr('transform', 'translate(' + source.y + ',' + source.x + ')')
+    .style('opacity', 0).remove();
+  nodes.forEach(d => { d.x0 = d.x; d.y0 = d.y; });
+}
+function linkPath(d) {
+  const sx = d.source.y + NODE_W, sy = d.source.x;
+  const tx = d.target.y, ty = d.target.x;
+  const midX = (sx + tx) / 2;
+  return 'M' + sx + ',' + sy + ' C' + midX + ',' + sy + ' ' + midX + ',' + ty + ' ' + tx + ',' + ty;
+}
+function toggleNode(d) {
+  if (d.children) { d._children = d.children; d.children = null; }
+  else if (d._children) { d.children = d._children; d._children = null; }
+  updateTree(d);
+}
+function hasHidden(d) { return d._children && d._children.length > 0; }
+// ─── Node Styling ────────────────────────────────────
+function getNodeFill(data) {
+  if (data.nodeType === 'root') return '#1e293b';
+  if (data.nodeType === 'pitch') return hexAlpha(COLORS.pitch[data.name] || '#64748b', 0.2);
+  if (data.nodeType === 'outcome') return hexAlpha(COLORS.outcome[data.name] || '#64748b', 0.15);
+  return '#1e293b';
+}
+function getNodeStroke(data) {
+  if (data.nodeType === 'root') return '#475569';
+  if (data.nodeType === 'pitch') return COLORS.pitch[data.name] || '#64748b';
+  if (data.nodeType === 'outcome') return COLORS.outcome[data.name] || '#64748b';
+  return '#475569';
+}
+function hexAlpha(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+// ─── Tooltip ──────────────────────────────────────────
+function showTooltip(event, d) {
+  const tt = document.getElementById('tooltip');
+  const data = d.data;
+  let html = '';
+  if (data.nodeType === 'root') {
+    html = '<div><span class="tt-label">Total At-Bats:</span> <span class="tt-value">' + data.count + '</span></div>';
+  } else {
+    html = '<div><span class="tt-label">Type:</span> <span class="tt-value">' + (data.nodeType === 'pitch' ? 'Pitch Selection' : 'Result') + '</span></div>'
+      + '<div><span class="tt-label">' + data.name + ':</span> <span class="tt-value">' + data.pct + '%</span></div>'
+      + '<div><span class="tt-label">Count:</span> <span class="tt-value">' + data.count + ' occurrences</span></div>'
+      + '<div><span class="tt-label">Ball-Strike:</span> <span class="tt-value">' + data.countStr + '</span></div>';
+    if (data.pct >= 65 && data.nodeType === 'pitch') {
+      html += '<div style="margin-top:6px;color:#ef4444;font-weight:700">\u26A0 Pattern detected \u2014 high predictability</div>';
+    }
+    if (data.atBatEnds) {
+      html += '<div style="margin-top:4px;color:#718096">At-bat ends here</div>';
+    }
+    const childCount = (d.children || d._children || []).length;
+    if (childCount > 0) {
+      html += '<div style="margin-top:4px;color:#718096">Click to ' + (d.children ? 'collapse' : 'expand') + ' (' + childCount + ' branches)</div>';
+    }
+  }
+  tt.innerHTML = html;
+  tt.style.left = (event.pageX + 15) + 'px';
+  tt.style.top = (event.pageY - 10) + 'px';
+  tt.classList.add('show');
+}
+function hideTooltip() { document.getElementById('tooltip').classList.remove('show'); }
+// ─── Zoom ─────────────────────────────────────────────
+function zoomBy(factor) {
+  d3.select('#treeSvg').transition().duration(300).call(zoomBehavior.scaleBy, factor);
+}
+function resetZoom() {
+  if (!rootNode) return;
+  const svg = d3.select('#treeSvg');
+  const bounds = svgGroup.node().getBBox();
+  const width = document.getElementById('treeArea').clientWidth;
+  const height = document.getElementById('treeArea').clientHeight;
+  const padding = 60;
+  const scaleX = (width - padding * 2) / bounds.width;
+  const scaleY = (height - padding * 2) / bounds.height;
+  const scale = Math.min(scaleX, scaleY, 1);
+  const tx = padding - bounds.x * scale + (width - bounds.width * scale) / 2 - padding;
+  const ty = padding - bounds.y * scale + (height - bounds.height * scale) / 2;
+  svg.transition().duration(500).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+}
+// ─── Utility ──────────────────────────────────────────
+function showLoading(show) { document.getElementById('loadingOverlay').classList.toggle('hidden', !show); }
+function setLoadingText(msg) { document.getElementById('loadingText').textContent = msg; }
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 8000);
+}
+function hideError() { document.getElementById('errorMsg').classList.remove('show'); }
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>
