@@ -42,6 +42,35 @@
     position: relative;
     width: 280px;
   }
+  .roster-btn {
+    padding: 8px 12px;
+    background: #1a2332;
+    border: 1px solid #2d3748;
+    border-radius: 6px;
+    color: #63b3ed;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .roster-btn:hover { background: #2d3748; border-color: #63b3ed; }
+  .roster-wrap {
+    position: relative;
+  }
+  .roster-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    width: 240px;
+    background: #1a2332;
+    border: 1px solid #2d3748;
+    border-radius: 0 0 6px 6px;
+    max-height: 300px;
+    overflow-y: auto;
+    display: none;
+    z-index: 200;
+  }
+  .roster-dropdown.show { display: block; }
   .search-wrap input {
     width: 100%;
     padding: 8px 12px;
@@ -433,6 +462,10 @@
     <input type="text" id="searchInput" placeholder="Search pitcher (e.g. Gerrit Cole)..." autocomplete="off">
     <div class="search-dropdown" id="searchDropdown"></div>
   </div>
+  <div class="roster-wrap">
+    <button class="roster-btn" id="rosterBtn" onclick="toggleRoster()">⚾ SL Roster</button>
+    <div class="roster-dropdown" id="rosterDropdown"></div>
+  </div>
   <div class="controls">
     <div class="mode-toggle">
       <button id="modeSeasonBtn" class="active" onclick="setMode('season')">Season</button>
@@ -582,6 +615,56 @@ let lastAnalyzeParams = null;    // { season, startDate, endDate, dateLabel }
 // =====================================================================
 // Data Fetching — MLB Stats API + Baseball Savant
 // =====================================================================
+/**
+ * Load Sugar Land Space Cowboys pitchers from MLB Stats API (teamId 570).
+ */
+async function loadSLRoster() {
+  const dropdown = document.getElementById('rosterDropdown');
+  dropdown.innerHTML = '<div class="search-item"><span class="name">Loading...</span></div>';
+  const season = document.getElementById('seasonSelect').value;
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/teams/570/roster?rosterType=active&season=${season}&hydrate=person(currentTeam)`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('Roster fetch failed');
+    const data = await resp.json();
+    const pitchers = (data.roster || [])
+      .filter(r => r.position && (r.position.abbreviation === 'P' || r.position.abbreviation === 'TWP'))
+      .sort((a, b) => a.person.fullName.localeCompare(b.person.fullName));
+    if (pitchers.length === 0) {
+      dropdown.innerHTML = '<div class="search-item"><span class="name">No pitchers found</span></div>';
+      return;
+    }
+    dropdown.innerHTML = '';
+    pitchers.forEach(r => {
+      const div = document.createElement('div');
+      div.className = 'search-item';
+      div.innerHTML = `<div class="name">${r.person.fullName}</div><div class="meta">#${r.jerseyNumber || '—'} · ${r.position.name}</div>`;
+      div.onclick = () => {
+        selectPitcher({ id: r.person.id, name: r.person.fullName, team: 'Sugar Land Space Cowboys', league: 'Triple-A West' });
+        dropdown.classList.remove('show');
+      };
+      dropdown.appendChild(div);
+    });
+  } catch (e) {
+    dropdown.innerHTML = `<div class="search-item"><span class="name">Error: ${e.message}</span></div>`;
+  }
+}
+
+let rosterLoaded = false;
+function toggleRoster() {
+  const dropdown = document.getElementById('rosterDropdown');
+  const isOpen = dropdown.classList.contains('show');
+  if (isOpen) {
+    dropdown.classList.remove('show');
+  } else {
+    dropdown.classList.add('show');
+    if (!rosterLoaded) {
+      rosterLoaded = true;
+      loadSLRoster();
+    }
+  }
+}
+
 /**
  * Search pitchers using MLB Stats API (CORS-friendly).
  * Searches MLB + all MiLB levels.
@@ -1005,7 +1088,7 @@ function computeSummary(atBats) {
     const opt = document.createElement('option');
     opt.value = y;
     opt.textContent = y;
-    if (y === currentYear - 1) opt.selected = true;
+    if (y === currentYear) opt.selected = true;
     seasonSel.appendChild(opt);
   }
   // Search input
@@ -1020,6 +1103,9 @@ function computeSummary(atBats) {
     if (!e.target.closest('.search-wrap')) {
       document.getElementById('searchDropdown').classList.remove('show');
     }
+    if (!e.target.closest('.roster-wrap')) {
+      document.getElementById('rosterDropdown').classList.remove('show');
+    }
   });
   // Default date range: last 30 days
   const today = new Date();
@@ -1033,6 +1119,12 @@ function computeSummary(atBats) {
   });
   document.getElementById('handednessSelect').addEventListener('change', () => {
     if (cachedRows) reprocessWithFilters();
+  });
+  // Reset roster cache when season changes so it reloads for the new year
+  document.getElementById('seasonSelect').addEventListener('change', () => {
+    rosterLoaded = false;
+    document.getElementById('rosterDropdown').innerHTML = '';
+    document.getElementById('rosterDropdown').classList.remove('show');
   });
   // Buttons
   document.getElementById('analyzeBtn').addEventListener('click', onAnalyze);
