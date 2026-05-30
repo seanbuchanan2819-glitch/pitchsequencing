@@ -456,6 +456,12 @@
       </select>
     </div>
     <div class="control-group">
+      <label>Catcher</label>
+      <select id="catcherSelect" disabled>
+        <option value="all" selected>All</option>
+      </select>
+    </div>
+    <div class="control-group">
       <label>Min Sample</label>
       <input type="number" id="minSample" value="10" min="3" max="50">
     </div>
@@ -570,6 +576,9 @@ let svgGroup = null;
 let zoomBehavior = null;
 let searchTimeout = null;
 let currentMode = 'season';
+let cachedRows = null;           // raw Statcast rows from last fetch
+let catcherMap = {};             // { playerId: 'Full Name', ... }
+let lastAnalyzeParams = null;    // { season, startDate, endDate, dateLabel }
 // =====================================================================
 // Data Fetching — MLB Stats API + Baseball Savant
 // =====================================================================
@@ -679,6 +688,93 @@ async function fetchStatcastData(playerId, season, startDate, endDate) {
   }
   return allRows;
 }
+/**
+ * Look up catcher names from Statcast rows via MLB Stats API.
+ * Extracts unique fielder_2 IDs and batch-fetches their names.
+ */
+async function lookupCatchers(rows) {
+  const ids = [...new Set(
+    rows.map(r => (r.fielder_2 || '').trim()).filter(id => id && id !== 'null' && id !== 'nan')
+  )];
+  if (ids.length === 0) return {};
+  const map = {};
+  // MLB API supports comma-separated personIds
+  const url = 'https://statsapi.mlb.com/api/v1/people?personIds=' + ids.join(',');
+  try {
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const data = await resp.json();
+      for (const p of (data.people || [])) {
+        map[String(p.id)] = p.fullName || ('ID ' + p.id);
+      }
+    }
+  } catch (e) {
+    console.warn('Catcher lookup failed:', e);
+  }
+  // Fallback for any IDs not returned
+  for (const id of ids) {
+    if (!map[id]) map[id] = 'Unknown (' + id + ')';
+  }
+  return map;
+}
+/**
+ * Populate the catcher dropdown from cached rows and catcher name map.
+ * Sorts catchers by pitch count (most pitches caught first).
+ */
+function populateCatcherDropdown(rows, cMap) {
+  const sel = document.getElementById('catcherSelect');
+  sel.innerHTML = '';
+  // "All" option
+  const allOpt = document.createElement('option');
+  allOpt.value = 'all';
+  allOpt.textContent = 'All';
+  allOpt.selected = true;
+  sel.appendChild(allOpt);
+  // Count pitches per catcher
+  const counts = {};
+  for (const r of rows) {
+    const cid = (r.fielder_2 || '').trim();
+    if (cid && cid !== 'null' && cid !== 'nan') {
+      counts[cid] = (counts[cid] || 0) + 1;
+    }
+  }
+  // Sort by count descending
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  for (const [cid, cnt] of sorted) {
+    const opt = document.createElement('option');
+    opt.value = cid;
+    opt.textContent = (cMap[cid] || cid) + ' (' + cnt + ')';
+    sel.appendChild(opt);
+  }
+  sel.disabled = sorted.length === 0;
+}
+/**
+ * Re-process cached data with current filter selections (no re-fetch).
+ */
+function reprocessWithFilters() {
+  if (!cachedRows || !lastAnalyzeParams) return;
+  const handedness = document.getElementById('handednessSelect').value;
+  const catcherId = document.getElementById('catcherSelect').value;
+  const minSample = parseInt(document.getElementById('minSample').value) || 10;
+  const atBats = processAtBats(cachedRows, handedness, catcherId);
+  if (!atBats || atBats.length === 0) {
+    showError('No at-bats found for the selected filters.');
+    return;
+  }
+  hideError();
+  const tree = buildDecisionTree(atBats, minSample);
+  const patterns = findPatterns(tree);
+  const summary = computeSummary(atBats);
+  const handLabel = handedness === 'L' ? 'vs LHH' : handedness === 'R' ? 'vs RHH' : '';
+  const catcherLabel = catcherId !== 'all' ? 'w/ ' + (catcherMap[catcherId] || catcherId) : '';
+  const filterParts = [lastAnalyzeParams.dateLabel, handLabel, catcherLabel].filter(Boolean);
+  renderResults({
+    tree: tree,
+    patterns: patterns,
+    summary: summary,
+    meta: { date_label: filterParts.join(' \u00B7 ') },
+  });
+}
 // =====================================================================
 // Data Processing — Port of Python Backend Logic
 // =====================================================================
@@ -686,7 +782,7 @@ async function fetchStatcastData(playerId, season, startDate, endDate) {
  * Convert raw Statcast CSV rows into structured at-bat sequences.
  * Each at-bat is an array of { pitch_group, outcome } objects.
  */
-function processAtBats(rows, handedness) {
+function processAtBats(rows, handedness, catcherId) {
   // Filter valid rows
   const valid = rows.filter(r => {
     const pt = (r.pitch_type || '').trim();
@@ -695,6 +791,11 @@ function processAtBats(rows, handedness) {
     if (handedness && handedness !== 'all') {
       const stand = (r.stand || '').trim();
       if (stand !== handedness) return false;
+    }
+    // Filter by catcher (Statcast 'fielder_2' column: catcher player ID)
+    if (catcherId && catcherId !== 'all') {
+      const cid = (r.fielder_2 || '').trim();
+      if (cid !== catcherId) return false;
     }
     return true;
   });
@@ -926,6 +1027,13 @@ function computeSummary(atBats) {
   thirtyAgo.setDate(thirtyAgo.getDate() - 30);
   document.getElementById('endDate').value = today.toISOString().split('T')[0];
   document.getElementById('startDate').value = thirtyAgo.toISOString().split('T')[0];
+  // Filter dropdowns — re-process cached data without re-fetching
+  document.getElementById('catcherSelect').addEventListener('change', () => {
+    if (cachedRows) reprocessWithFilters();
+  });
+  document.getElementById('handednessSelect').addEventListener('change', () => {
+    if (cachedRows) reprocessWithFilters();
+  });
   // Buttons
   document.getElementById('analyzeBtn').addEventListener('click', onAnalyze);
   document.getElementById('zoomIn').addEventListener('click', () => zoomBy(1.3));
@@ -983,6 +1091,13 @@ function selectPitcher(pitcher) {
   document.getElementById('searchInput').value = pitcher.name;
   document.getElementById('searchDropdown').classList.remove('show');
   document.getElementById('analyzeBtn').disabled = false;
+  // Reset catcher filter — catchers will populate after next fetch
+  cachedRows = null;
+  lastAnalyzeParams = null;
+  catcherMap = {};
+  const catcherSel = document.getElementById('catcherSelect');
+  catcherSel.innerHTML = '<option value="all" selected>All</option>';
+  catcherSel.disabled = true;
 }
 // =====================================================================
 // Mode Toggle
@@ -1018,6 +1133,7 @@ async function onAnalyze() {
   } else {
     dateLabel = season;
   }
+  const catcherId = document.getElementById('catcherSelect').value;
   showLoading(true);
   hideError();
   document.getElementById('welcomeMsg').classList.add('hidden');
@@ -1035,27 +1151,36 @@ async function onAnalyze() {
         + '. MiLB data may be limited depending on stadium Statcast availability.');
       return;
     }
-    // 2. Process into at-bat sequences
+    // Cache rows and params for catcher filter re-processing
+    cachedRows = rows;
+    lastAnalyzeParams = { season, startDate, endDate, dateLabel };
+    // 2. Look up catcher names and populate dropdown
+    setLoadingText('Looking up catchers...');
+    catcherMap = await lookupCatchers(rows);
+    populateCatcherDropdown(rows, catcherMap);
+    // 3. Process into at-bat sequences
     setLoadingText('Processing ' + rows.length.toLocaleString() + ' pitches...');
-    const atBats = processAtBats(rows, handedness);
+    const atBats = processAtBats(rows, handedness, catcherId);
     if (!atBats || atBats.length === 0) {
       showError('Could not process pitch data into at-bats.');
       return;
     }
-    // 3. Build decision tree
+    // 4. Build decision tree
     setLoadingText('Building decision tree...');
     const tree = buildDecisionTree(atBats, minSample);
-    // 4. Find patterns
+    // 5. Find patterns
     const patterns = findPatterns(tree);
-    // 5. Compute summary
+    // 6. Compute summary
     const summary = computeSummary(atBats);
-    // 6. Render everything
+    // 7. Render everything
     const handLabel = handedness === 'L' ? 'vs LHH' : handedness === 'R' ? 'vs RHH' : '';
+    const catcherLabel = catcherId !== 'all' ? 'w/ ' + (catcherMap[catcherId] || catcherId) : '';
+    const filterParts = [dateLabel, handLabel, catcherLabel].filter(Boolean);
     renderResults({
       tree: tree,
       patterns: patterns,
       summary: summary,
-      meta: { date_label: dateLabel + (handLabel ? ' \u00B7 ' + handLabel : '') },
+      meta: { date_label: filterParts.join(' \u00B7 ') },
     });
   } catch (err) {
     console.error('Analyze error:', err);
