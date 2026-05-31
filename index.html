@@ -623,7 +623,7 @@ async function loadSLRoster() {
   dropdown.innerHTML = '<div class="search-item"><span class="name">Loading...</span></div>';
   const season = document.getElementById('seasonSelect').value;
   try {
-    const url = `https://statsapi.mlb.com/api/v1/teams/570/roster?rosterType=active&season=${season}&hydrate=person(currentTeam)`;
+    const url = `https://statsapi.mlb.com/api/v1/teams/5434/roster?rosterType=active&season=${season}&hydrate=person(currentTeam)`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error('Roster fetch failed');
     const data = await resp.json();
