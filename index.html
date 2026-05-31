@@ -458,6 +458,7 @@
 <!-- ─── Header ─────────────────────────────────────────────── -->
 <div class="header">
   <h1><span>///</span> Pitch Sequencing Analyzer</h1>
+  <div id="selectedPitcherDisplay" style="display:none; color:#63b3ed; font-size:14px; font-weight:600; white-space:nowrap;"></div>
   <div class="search-wrap">
     <input type="text" id="searchInput" placeholder="Search pitcher (e.g. Gerrit Cole)..." autocomplete="off">
     <div class="search-dropdown" id="searchDropdown"></div>
@@ -758,7 +759,7 @@ async function fetchStatcastData(playerId, season, startDate, endDate) {
       + '&player_id=' + playerId
       + '&game_date_gt=' + chunk.start
       + '&game_date_lt=' + chunk.end
-      + '&type=details&all=true';
+      + '&type=details&all=true&game_level=All';
     try {
       const csvText = await fetchWithProxy(csvUrl);
       const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
@@ -1183,6 +1184,9 @@ function selectPitcher(pitcher) {
   document.getElementById('searchInput').value = pitcher.name;
   document.getElementById('searchDropdown').classList.remove('show');
   document.getElementById('analyzeBtn').disabled = false;
+  const display = document.getElementById('selectedPitcherDisplay');
+  display.textContent = '▶ ' + pitcher.name;
+  display.style.display = 'block';
   // Reset catcher filter — catchers will populate after next fetch
   cachedRows = null;
   lastAnalyzeParams = null;
